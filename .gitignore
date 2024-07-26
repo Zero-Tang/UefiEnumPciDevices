@@ -1,0 +1,6 @@
+# Git-Ignore
+compchk_uefix64/
+pci_list.h
+pci.ids
+output.txt
+OVMF-pure-efi.fd
