@@ -44,6 +44,10 @@ Output will be written to `output.txt` in the root folder of your USB flash stic
 To run this project on QEMU for Windows, you may execute `run_qemu.bat`. This script will build this project and run QEMU. \
 Output will be written to `output.txt` in this repository.
 
+#### OVMF for Windows
+You will need to use [OVMF](https://www.kraxel.org/repos/jenkins/edk2/edk2.git-ovmf-x64-0-20220719.209.gf0064ac3af.EOL.no.nore.updates.noarch.rpm) as the UEFI Firmware for QEMU VM. \
+This is an `rpm` package. You may use [7-zip](https://www.7-zip.org/) to extract its contents. You need to place `OVMF-pure-efi.fd` into this repository.
+
 ### QEMU + Linux KVM
 To run this project on QEMU+KVM from a Linux machine (or WSL2), you need to setup additional packages than QEMU itself. For example, in Ubuntu/Debian-based systems:
 ```

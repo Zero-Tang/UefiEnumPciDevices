@@ -5,6 +5,7 @@
 #include <Library/PrintLib.h>
 #include <Protocol/LoadedImage.h>
 #include <Guid/FileInfo.h>
+#include <IndustryStandard/MemoryMappedConfigurationSpaceAccessTable.h>
 #include <stdarg.h>
 #include "efimain.h"
 #include "pci_list.h"
@@ -198,6 +199,141 @@ EFI_STATUS FilePrint(IN EFI_FILE_PROTOCOL* File,IN CONST CHAR8* Format,...)
 	return File->Write(File,&OutputLength,OutputString);
 }
 
+UINT32 EnumeratePciDevicesByPortIO(EFI_FILE_PROTOCOL* LogFile)
+{
+	UINT32 Count=0;
+	for(UINT32 b=0;b<256;b++)
+	{
+		for(UINT32 d=0;d<32;d++)
+		{
+			for(UINT32 f=0;f<8;f++)
+			{
+				UINT16 VendorId,DeviceId;
+				// Setup Register Value to write.
+				PCI_CONFIG_ADDRESS_REGISTER ConfigAddress;
+				ConfigAddress.Offset=0;
+				ConfigAddress.Function=f;
+				ConfigAddress.Device=d;
+				ConfigAddress.Bus=b;
+				ConfigAddress.Reserved=0;
+				ConfigAddress.Enable=1;
+				// Write to PCI...
+				__outdword(0xCF8,ConfigAddress.Value);
+				// Read from PCI...
+				VendorId=__inword(0xCFC);
+				DeviceId=__inword(0xCFE);
+				// Print out...
+				if(VendorId!=0xFFFF && DeviceId!=0xFFFF)
+				{
+					PCI_CONFIG_HEADER_TYPE HeaderType;
+					PCI_CONFIG_CLASS_REGISTER ClassRegister;
+					CHAR8 *VendorName=GetVendorName(VendorId),*DeviceName=GetDeviceName(VendorId,DeviceId);
+					CHAR8 *ClassName,*SubclassName,*ProgifName;
+					// Output Vendor/Device Info...
+					FilePrint(LogFile,"Address: %03u.%02u.%01u    ",b,d,f);
+					FilePrint(LogFile,"Vendor ID: 0x%04X Device ID: 0x%04X (%a | %a)\n",VendorId,DeviceId,VendorName,DeviceName);
+					// Grab Class Info...
+					ConfigAddress.Offset=8;
+					__outdword(0xCF8,ConfigAddress.Value);
+					ClassRegister.Value=__indword(0xCFC);
+					ClassName=GetClassName(ClassRegister.Class);
+					SubclassName=GetSubclassName(ClassRegister.Class,ClassRegister.Subclass);
+					ProgifName=GetProgrammingInterfaceName(ClassRegister.Class,ClassRegister.Subclass,ClassRegister.ProgIF);
+					// Output Classification...
+					FilePrint(LogFile,"Classification: %02X.%02X.%02X   ",ClassRegister.Class,ClassRegister.Subclass,ClassRegister.ProgIF);
+					FilePrint(LogFile,"(%a",ClassName);
+					if(SubclassName)
+						FilePrint(LogFile," > %a",SubclassName);
+					if(ProgifName)
+						FilePrint(LogFile," > %a",ProgifName);
+					FilePrint(LogFile,")\n");
+					// Grab Header Type...
+					ConfigAddress.Offset=0xC;
+					__outdword(0xCF8,ConfigAddress.Value);
+					HeaderType.Value=__inbyte(0xCFE);
+					if(HeaderType.HeaderType==0)
+					{
+						UINT16 SubsystemVendorId,SubsystemDeviceId;
+						ConfigAddress.Offset=0x2C;
+						__outdword(0xCF8,ConfigAddress.Value);
+						SubsystemVendorId=__inword(0xCFC);
+						SubsystemDeviceId=__inword(0xCFE);
+						if(SubsystemVendorId!=VendorId || SubsystemDeviceId!=DeviceId)
+							FilePrint(LogFile,"Subsystem Vendor ID: 0x%04X Subsystem ID: 0x%04X (%a)\n",SubsystemVendorId,SubsystemDeviceId,GetSubsystemName(VendorId,DeviceId,SubsystemVendorId,SubsystemDeviceId));
+					}
+					FilePrint(LogFile,"\n");
+					Count++;
+				}
+			}
+		}
+	}
+	return Count;
+}
+
+UINT32 EnumeratePciDevices(EFI_FILE_PROTOCOL* LogFile)
+{
+	EFI_ACPI_COMMON_HEADER* McfgHead=EfiLocateFirstAcpiTable(EFI_ACPI_2_0_MEMORY_MAPPED_CONFIGURATION_BASE_ADDRESS_TABLE_SIGNATURE);
+	if(McfgHead==NULL)
+		return EnumeratePciDevicesByPortIO(LogFile);
+	else
+	{
+		UINT32 Count=0;
+		do
+		{
+			EFI_ACPI_MEMORY_MAPPED_ENHANCED_CONFIGURATION_SPACE_BASE_ADDRESS_ALLOCATION_STRUCTURE *McfgArray=(EFI_ACPI_MEMORY_MAPPED_ENHANCED_CONFIGURATION_SPACE_BASE_ADDRESS_ALLOCATION_STRUCTURE*)((UINTN)McfgHead+sizeof(EFI_ACPI_MEMORY_MAPPED_CONFIGURATION_BASE_ADDRESS_TABLE_HEADER));
+			const UINT32 TableCount=(McfgHead->Length-sizeof(EFI_ACPI_MEMORY_MAPPED_CONFIGURATION_BASE_ADDRESS_TABLE_HEADER))/sizeof(EFI_ACPI_MEMORY_MAPPED_ENHANCED_CONFIGURATION_SPACE_BASE_ADDRESS_ALLOCATION_STRUCTURE);
+			for(UINT32 i=0;i<TableCount;i++)
+			{
+				Print(L"Enumerating PCI Segment 0x%04X via MCFG base 0x%llX...\n",McfgArray[i].PciSegmentGroupNumber,McfgArray[i].BaseAddress);
+				for(UINT32 b=McfgArray[i].StartBusNumber;b<McfgArray[i].EndBusNumber;b++)
+				{
+					for(UINT32 d=0;d<32;d++)
+					{
+						for(UINT32 f=0;f<8;f++)
+						{
+							const UINT64 MmioBase=McfgArray[i].BaseAddress+(b<<20)+(d<<15)+(f<<12);
+							UINT16 VendorId=*(UINT16*)(MmioBase+0);
+							UINT16 DeviceId=*(UINT16*)(MmioBase+2);
+							if(DeviceId!=0xFFFF && VendorId!=0xFFFF)
+							{
+								PCI_CONFIG_CLASS_REGISTER ClassRegister={.Value=*(UINT32*)(MmioBase+8)};
+								PCI_CONFIG_HEADER_TYPE HeaderType={.Value=*(UINT8*)(MmioBase+0xE)};
+								// Get Names...
+								CHAR8* VendorName=GetVendorName(VendorId);
+								CHAR8* DeviceName=GetDeviceName(VendorId,DeviceId);
+								CHAR8* ClassName=GetClassName(ClassRegister.Class);
+								CHAR8* SubclassName=GetSubclassName(ClassRegister.Class,ClassRegister.Subclass);
+								CHAR8* ProgifName=GetProgrammingInterfaceName(ClassRegister.Class,ClassRegister.Subclass,ClassRegister.ProgIF);
+								// Output
+								FilePrint(LogFile,"Address: %04X:%03u:%02u:%01u    ",McfgArray[i].PciSegmentGroupNumber,b,d,f);
+								FilePrint(LogFile,"Vendor ID: 0x%04X Device ID: 0x%04X (%a | %a)\n",VendorId,DeviceId,VendorName,DeviceName);
+								FilePrint(LogFile,"Classification: %02X.%02X.%02X   ",ClassRegister.Class,ClassRegister.Subclass,ClassRegister.ProgIF);
+								FilePrint(LogFile,"(%a",ClassName);
+								if(SubclassName)
+									FilePrint(LogFile," > %a",SubclassName);
+								if(ProgifName)
+									FilePrint(LogFile," > %a",ProgifName);
+								FilePrint(LogFile,")\n");
+								if(HeaderType.HeaderType==0)
+								{
+									UINT16 SubsystemVendorId=*(UINT16*)(MmioBase+0x2C);
+									UINT16 SubsystemDeviceId=*(UINT16*)(MmioBase+0x2E);
+									if(SubsystemVendorId!=VendorId || SubsystemDeviceId!=DeviceId)
+										FilePrint(LogFile,"Subsystem Vendor ID: 0x%04X Subsystem ID: 0x%04X (%a)\n",SubsystemVendorId,SubsystemDeviceId,GetSubsystemName(VendorId,DeviceId,SubsystemVendorId,SubsystemDeviceId));
+								}
+								FilePrint(LogFile,"\n");
+								Count++;
+							}
+						}
+					}
+				}
+			}
+			McfgHead=EfiLocateNextAcpiTable(EFI_ACPI_2_0_MEMORY_MAPPED_CONFIGURATION_BASE_ADDRESS_TABLE_SIGNATURE,McfgHead);
+		}while(McfgHead);
+		return Count;
+	}
+}
+
 EFI_STATUS EFIAPI EfiEntry(IN EFI_HANDLE ImageHandle,IN EFI_SYSTEM_TABLE *SystemTable)
 {
 	EFI_FILE_PROTOCOL* LogFile;
@@ -215,74 +351,9 @@ EFI_STATUS EFIAPI EfiEntry(IN EFI_HANDLE ImageHandle,IN EFI_SYSTEM_TABLE *System
 		Print(L"Failed to open file! Status=%u\n",st);
 	else
 	{
-		UINT16 Count=0;
-		FilePrint(LogFile,"PCI-List Version: %a Date: %a\n",KnownPciListVersion,KnownPciListDate);
+		FilePrint(LogFile,"PCI-List Version: %a Date: %a\n\n",KnownPciListVersion,KnownPciListDate);
 		// Enumerate PCI Devices...
-		for(UINT32 b=0;b<256;b++)
-		{
-			for(UINT32 d=0;d<32;d++)
-			{
-				for(UINT32 f=0;f<8;f++)
-				{
-					UINT16 VendorId,DeviceId;
-					// Setup Register Value to write.
-					PCI_CONFIG_ADDRESS_REGISTER ConfigAddress;
-					ConfigAddress.Offset=0;
-					ConfigAddress.Function=f;
-					ConfigAddress.Device=d;
-					ConfigAddress.Bus=b;
-					ConfigAddress.Reserved=0;
-					ConfigAddress.Enable=1;
-					// Write to PCI...
-					__outdword(0xCF8,ConfigAddress.Value);
-					// Read from PCI...
-					VendorId=__inword(0xCFC);
-					DeviceId=__inword(0xCFE);
-					// Print out...
-					if(VendorId!=0xFFFF && DeviceId!=0xFFFF)
-					{
-						PCI_CONFIG_HEADER_TYPE HeaderType;
-						PCI_CONFIG_CLASS_REGISTER ClassRegister;
-						CHAR8 *VendorName=GetVendorName(VendorId),*DeviceName=GetDeviceName(VendorId,DeviceId);
-						CHAR8 *ClassName,*SubclassName,*ProgifName;
-						// Output Vendor/Device Info...
-						FilePrint(LogFile,"Address: %03u.%02u.%01u    ",b,d,f);
-						FilePrint(LogFile,"Vendor ID: 0x%04X Device ID: 0x%04X (%a | %a)\n",VendorId,DeviceId,VendorName,DeviceName);
-						// Grab Class Info...
-						ConfigAddress.Offset=8;
-						__outdword(0xCF8,ConfigAddress.Value);
-						ClassRegister.Value=__indword(0xCFC);
-						ClassName=GetClassName(ClassRegister.Class);
-						SubclassName=GetSubclassName(ClassRegister.Class,ClassRegister.Subclass);
-						ProgifName=GetProgrammingInterfaceName(ClassRegister.Class,ClassRegister.Subclass,ClassRegister.ProgIF);
-						// Output Classification...
-						FilePrint(LogFile,"Classification: %02X.%02X.%02X   ",ClassRegister.Class,ClassRegister.Subclass,ClassRegister.ProgIF);
-						FilePrint(LogFile,"(%a",ClassName);
-						if(SubclassName)
-							FilePrint(LogFile," > %a",SubclassName);
-						if(ProgifName)
-							FilePrint(LogFile," > %a",ProgifName);
-						FilePrint(LogFile,")\n");
-						// Grab Header Type...
-						ConfigAddress.Offset=0xC;
-						__outdword(0xCF8,ConfigAddress.Value);
-						HeaderType.Value=__inbyte(0xCFE);
-						if(HeaderType.HeaderType==0)
-						{
-							UINT16 SubsystemVendorId,SubsystemDeviceId;
-							ConfigAddress.Offset=0x2C;
-							__outdword(0xCF8,ConfigAddress.Value);
-							SubsystemVendorId=__inword(0xCFC);
-							SubsystemDeviceId=__inword(0xCFE);
-							if(SubsystemVendorId!=VendorId || SubsystemDeviceId!=DeviceId)
-								FilePrint(LogFile,"Subsystem Vendor ID: 0x%04X Subsystem ID: 0x%04X (%a)\n",SubsystemVendorId,SubsystemDeviceId,GetSubsystemName(VendorId,DeviceId,SubsystemVendorId,SubsystemDeviceId));
-						}
-						FilePrint(LogFile,"\n");
-						Count++;
-					}
-				}
-			}
-		}
+		UINT32 Count=EnumeratePciDevices(LogFile);
 		// Conclusion...
 		FilePrint(LogFile,"Detected %u PCI Devices in the system...\n",Count);
 		LogFile->Flush(LogFile);
