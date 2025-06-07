@@ -32,6 +32,23 @@ You may execute `build.bat` in order to build the EFI executable and disk images
 - `UefiEnumPciDevices.img` is a raw disk image. You may use it on QEMU.
 - `UefiEnumPciDevices.img.vmdk` is a VMDK disk image. You may use it on VMware.
 
+## Rust
+This tool is remastered with Rust. However, there still are pre-requisites to be done:
+
+- Install [Rust](https://www.rust-lang.org/tools/install). You must also ensure you have installed UEFI-related target toolchain.
+	```
+	rustup target add x86_64-unknown-uefi
+	```
+- Install [Python 3](https://www.python.org/downloads/windows/). The minimum version of Python must be 3.9.
+- Install [mtools](https://github.com/Zero-Tang/NoirVisor/files/12706542/mtools-4.0.43-bin.zip). You need to extract these files and put them in `PATH` variable.
+- Install [QEMU for Windows](https://qemu.weilnetz.de/w64/). This is intended for converting disk images.
+
+You may execute `build-rs.bat` in order to build the EFI executable and disk images. You need Internet access in order to fetch latest PCI-ID list.
+
+- `enum-pci-devices.efi` is the EFI executable.
+- `UefiEnumPciDevices.img` is a raw disk image. You may use it on QEMU.
+- `UefiEnumPciDevices.img.vmdk` is a VMDK disk image. You may use it on VMware.
+
 ## Run
 There are several ways to run this project.
 

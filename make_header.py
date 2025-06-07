@@ -1,6 +1,8 @@
 # Python tool to generate PCI-IDs header.
 import time
 import requests
+import os
+import sys
 
 class device_progif:
 	def __init__(self,parent,progif_id:int,progif_name:str):
@@ -284,14 +286,65 @@ def main(lines:list[str]):
 	f.write("};\n\n")
 	# Finished
 	f.close()
+	# Generate Rust Module
+	f=open(os.path.join("src","pcilist.rs"),'w',encoding='utf-8')
+	f.write("// Generated PCI-ID List header file\n\n")
+	f.write("pub const KNOWN_PCI_LIST_VERSION:&'static str=\"{}\";\n".format(r["version"]))
+	f.write("pub const KNOWN_PCI_LIST_DATE:&'static str=\"{}\";\n\n".format(r["date"]))
+	# Generate Vendor List
+	f.write("pub static KNOWN_PCI_VENDORS:[(u16,&'static str);{}]=\n[\n".format(len(vendor_list)))
+	for v in vendor_list:
+		f.write("\t(0x{:04X},\"{}\"),\n".format(v.id,v.name.replace('"','\\"')))
+	f.write("\n];\n\n")
+	# Generate Device List
+	f.write("pub static KNOWN_PCI_DEVICES:[(u32,&'static str);{}]=\n[\n".format(len(device_list)))
+	for d in device_list:
+		v=d.parent
+		device_id=(v.id<<16)|d.id
+		f.write("\t(0x{:08X},\"{}\"),\n".format(device_id,d.name.replace('"','\\"')))
+	f.write("];\n\n")
+	# Generate Subsystem Names
+	f.write("pub static KNOWN_PCI_SUBSYSTEMS:[(u64,&'static str);{}]=\n[\n".format(len(subsys_list)))
+	for s in subsys_list:
+		d=s.parent
+		v=d.parent
+		subsys_id=(v.id<<48)|(d.id<<32)|(s.vendor_id<<16)|s.device_id
+		f.write("\t(0x{:016X},\"{}\"),\n".format(subsys_id,s.name.replace('"','\\"')))
+	f.write("];\n\n")
+	# Generate Classes
+	f.write("pub static KNOWN_PCI_CLASSES:[(u8,&'static str);{}]=\n[\n".format(len(class_list)))
+	for c in class_list:
+		f.write("\t(0x{:02X},\"{}\"),\n".format(c.id,c.name.replace('"','\\"')))
+	f.write("];\n\n")
+	# Generate Subclasses
+	f.write("pub static KNOWN_PCI_SUBCLASSES:[(u16,&'static str);{}]=\n[\n".format(len(subclass_list)))
+	for s in subclass_list:
+		c=s.parent
+		subclass_id=(c.id<<8)|s.id
+		f.write("\t(0x{:04X},\"{}\"),\n".format(subclass_id,s.name.replace('"','\\"')))
+	f.write("];\n\n")
+	# Generate Programming-Interfaces
+	f.write("pub static KNOWN_PCI_PROGIFS:[(u32,&'static str);{}]=\n[\n".format(len(progif_list)))
+	for p in progif_list:
+		s=p.parent
+		c=s.parent
+		progif_id=(c.id<<16)|(s.id<<8)|p.id
+		f.write("\t(0x{:06X},\"{}\"),\n".format(progif_id,p.name.replace('"','\\"')))
+	f.write("];")
+	f.close()
 
 if __name__=="__main__":
 	t1=time.time()
-	r=requests.request('GET',"https://pci-ids.ucw.cz/v2.2/pci.ids")
-	lines=r.text.split('\n')
-	f=open("pci.ids",'w',encoding='utf-8')
-	f.write(r.text)
-	f.close()
+	if sys.argv.count("--refresh") or not os.path.exists("pci.ids"):
+		r=requests.request('GET',"https://pci-ids.ucw.cz/v2.2/pci.ids")
+		lines=r.text.split('\n')
+		f=open("pci.ids",'w',encoding='utf-8')
+		f.write(r.text)
+		f.close()
+	else:
+		f=open("pci.ids",'r',encoding='utf-8')
+		lines=f.read().split('\n')
+		f.close()
 	main(lines)
 	t2=time.time()
 	print("Time Elapsed due to Generator: {} seconds".format(t2-t1))

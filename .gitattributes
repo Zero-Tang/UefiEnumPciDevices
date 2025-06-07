@@ -1,0 +1,8 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+*.c linguist-language=C
+*.h linguist-language=C
+*.rs linguist-language=Rust
+*.py linguist-language=Python
+*.bat linguist-detectable=false

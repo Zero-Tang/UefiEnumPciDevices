@@ -1,6 +1,13 @@
 # Git-Ignore
 compchk_uefix64/
 pci_list.h
+src/pcilist.rs
 pci.ids
 output.txt
 OVMF-pure-efi.fd
+*.img
+*.vmdk
+
+# Added by cargo
+
+/target

@@ -1,0 +1,19 @@
+[package]
+name = "enum-pci-devices"
+version = "2.0.0"
+edition = "2024"
+
+[profile.dev]
+debug = "full"
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+debug = "full"
+codegen-units = 1
+lto = true
+opt-level = 3
+
+[dependencies]
+acpi = "5.2.0"
+uefi = "0.35.0"
